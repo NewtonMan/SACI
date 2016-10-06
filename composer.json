@@ -1,0 +1,51 @@
+{
+    "name": "Saci",
+    "description": "Antispam/AntiVirus/Pishing-Protection Interface and Workers to pure Postfix/MailScanner Email Gateway.",
+    "homepage": "http://git.com/NewtonMan/Saci",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=5.5.9",
+        "components/jquery": "1.12.*",
+        "twbs/bootstrap": "3.*",
+        "FortAwesome/Font-Awesome": "*",
+        "cakephp/cakephp": "2.*",
+        "php-mime-mail-parser/php-mime-mail-parser": "*",
+        "holt59/cakephp-bootstrap3-helpers": "dev-master"
+    },
+    "require-dev": {
+        "cakephp/debug_kit" : "2.*"
+    },
+    "extra": {
+        "installer-paths": {
+            "app/Plugin/{$name}": ["holt59/cakephp-bootstrap3-helpers","cakephp/debug_kit"]
+        }
+    },
+    "scripts": {
+        "post-install-cmd": [
+            "@jQueryDeploy",
+            "@bootstrapDeploy",
+            "@fontAwesomeDeploy"
+        ],
+        "post-update-cmd": [
+            "@jQueryDeploy",
+            "@bootstrapDeploy",
+            "@fontAwesomeDeploy"
+        ],
+        "jQueryDeploy": [
+            "if [ -d \"app/webroot/assets/jquery\" ]; then echo jquery-dir ok; else mkdir app/webroot/assets/jquery; fi",
+            "cp -rf vendor/components/jquery/*.js app/webroot/assets/jquery/"
+        ],
+        "bootstrapDeploy": [
+            "if [ -d \"app/webroot/assets/bootstrap\" ]; then echo bootstrap-dir ok; else mkdir app/webroot/assets/bootstrap; fi",
+            "cp -rf vendor/twbs/bootstrap/dist/* app/webroot/assets/bootstrap/"
+        ],
+        "fontAwesomeDeploy": [
+            "if [ -d \"app/webroot/assets/font-awesome\" ]; then echo font-awesome-dir ok; else mkdir app/webroot/assets/font-awesome; fi",
+            "cp -rf vendor/fortawesome/font-awesome/css app/webroot/assets/font-awesome/",
+            "cp -rf vendor/fortawesome/font-awesome/fonts app/webroot/assets/font-awesome/"
+        ]
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

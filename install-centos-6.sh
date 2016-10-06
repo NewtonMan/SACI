@@ -1,0 +1,546 @@
+#!/bin/bash
+# MailScanner installation script for RPM based systems
+# SCRIPT CHANGED TO INSTALL AS SACI NEEDS
+# 
+# This script installs the required software for
+# MailScanner via yum and CPAN based on user input.  
+#
+# Tested distributions: 	CentOS 5,6,7
+#							RHEL 6
+#
+# Written by:
+# Jerry Benton < mailscanner@mailborder.com >
+# 29 APR 2016
+PWD=`pwd`
+if [ $PWD != "/var/www/html/SACI" ]; then
+    clear;
+    echo -e "ERROR, SACI must be unziped to /var/www/html/SACI before we start installing.\nYou unziped SACI to $PWD";
+    exit 0;
+fi
+SACI='postfix php56w-common php56w-mysql php56w-mbstring php56w-xml php56w-imap php56w-pear php56w-devel php56w-pecl-memcached memcached httpd httpd-tools mysql mysql-server mysql-clients'
+
+# clear the screen. yay!
+clear
+
+# where i started for RPM install
+THISCURRPMDIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
+
+# Function used to Wait for n seconds
+timewait () {
+	DELAY=$1
+	sleep $DELAY
+}
+
+# Check for root user
+if [ $(whoami) != "root" ]; then
+	clear
+	echo;
+	echo "Installer must be run as root. Aborting. Use 'su -' to switch to the root environment."; echo;
+	exit 192
+fi
+
+# bail if yum is not installed
+if [ ! -x '/usr/bin/yum' ]; then
+	clear
+	echo;
+	echo "Yum package manager is not installed. You must install this before starting";
+	echo "the MailScanner installation process. Installation aborted."; echo;
+	exit 192
+else
+	YUM='/usr/bin/yum';
+fi
+
+# confirm the RHEL release is known before continuing
+if [ ! -f '/etc/redhat-release' ]; then
+	# this is mostly to prevent accidental installation on a non redhat based system
+	echo "Unable to determine distribution release from /etc/redhat-release. Installation aborted."; echo;
+	exit 192
+else
+	# figure out what release is being used
+	if grep -qs 'release 5' /etc/redhat-release ; then
+			# RHEL 5
+			RHEL=0
+	elif grep -qs 'release 6' /etc/redhat-release ; then
+			# RHEL 6
+			RHEL=6
+	elif grep -qs 'release 7' /etc/redhat-release ; then
+			# RHEL 7
+			RHEL=0
+	else
+			# No supported release match
+			RHEL=0
+	fi
+fi
+
+
+MTAOPTION="postfix";
+SA=1
+SAOPTION="spamassassin"
+EPEL=1
+EPELOPTION="epel-release";
+CAV=1
+CAVOPTION="clamav clamd clamav-update clamav-server";
+TNEF="tnef";
+TNEFOPTION=1
+UNRAROPTION=1
+CPANOPTION=1
+DFOPTION=0
+NODEPS=
+SELMODE=1
+
+# ask if the user wants to add a ramdisk
+clear
+echo;
+echo "Do you want to create a RAMDISK?"; echo;
+echo "This will create a mount in /etc/fstab that attaches the processing"; 
+echo "directory /var/spool/MailScanner/incoming to a RAMDISK, which greatly"; 
+echo "increases processing speed at the cost of the reservation of some of";
+echo "the system RAM. The size depends on the number of MailScanner children,";
+echo "the number of messages per batch, and incoming email volume."
+echo;
+echo "Specify a size in MB or leave blank for none.";
+echo;
+echo "Suggestions:";
+echo "		None		0";
+echo "		Small		256";
+echo "		Medium		512";
+echo " 		Large 		1024 or 2048";
+echo " 		Enterprise	4096 or 8192";
+echo;
+echo "Example: 1024"; echo;
+read -r -p "Specify a RAMDISK size? [0] : " RAMDISKSIZE
+
+if [[ $RAMDISKSIZE =~ ^[0-9]+$ ]]; then
+	if [ $RAMDISKSIZE != 0 ]; then
+		# user wants ramdisk
+		RAMDISK=1
+	else
+		RAMDISK=0
+	fi
+else
+	# no ramdisk
+	RAMDISK=0
+fi
+
+# base system packages
+BASEPACKAGES="binutils gcc glibc-devel libaio make man-pages man-pages-overrides patch rpm tar time unzip which zip libtool-ltdl perl curl wget openssl openssl-devel bzip2-devel";
+
+# Packages available in the yum base of RHEL 5,6,7
+# and EPEL. If the user elects not to use EPEL or if the 
+# package is not available for their distro release it
+# will be ignored during the install.
+#
+MOREPACKAGES="perl-Archive-Tar perl-Archive-Zip perl-Compress-Raw-Zlib perl-Compress-Zlib perl-Convert-BinHex perl-Convert-TNEF perl-CPAN perl-Data-Dump perl-DBD-SQLite perl-DBI perl-Digest-HMAC perl-Digest-SHA1 perl-Env perl-ExtUtils-MakeMaker perl-File-ShareDir-Install perl-File-Temp perl-Filesys-Df perl-Getopt-Long perl-IO-String perl-IO-stringy perl-HTML-Parser perl-HTML-Tagset perl-Inline perl-IO-Zlib perl-Mail-DKIM perl-Mail-IMAPClient perl-Mail-SPF perl-MailTools perl-MIME-tools perl-Net-CIDR perl-Net-DNS perl-Net-DNS-Resolver-Programmable perl-Net-IP perl-OLE-Storage_Lite perl-Pod-Escapes perl-Pod-Simple perl-Scalar-List-Utils perl-Storable perl-Pod-Escapes perl-Pod-Simple perl-Razor-Agent perl-Sys-Hostname-Long perl-Sys-SigAction perl-Test-Manifest perl-Test-Pod perl-Time-HiRes perl-TimeDate perl-URI perl-YAML pyzor re2c unrar tnef";
+
+# the array of perl modules needed
+ARMOD=();
+ARMOD+=('Archive::Tar'); 		ARMOD+=('Archive::Zip');		ARMOD+=('bignum');				
+ARMOD+=('Carp');				ARMOD+=('Compress::Zlib');		ARMOD+=('Compress::Raw::Zlib');	
+ARMOD+=('Convert::BinHex'); 	ARMOD+=('Convert::TNEF');		ARMOD+=('Data::Dumper');		
+ARMOD+=('Date::Parse');			ARMOD+=('DBD::SQLite');			ARMOD+=('DBI');					
+ARMOD+=('Digest::HMAC');		ARMOD+=('Digest::MD5');			ARMOD+=('Digest::SHA1'); 		
+ARMOD+=('DirHandle');			ARMOD+=('ExtUtils::MakeMaker');	ARMOD+=('Fcntl');				
+ARMOD+=('File::Basename');		ARMOD+=('File::Copy');			ARMOD+=('File::Path');			
+ARMOD+=('File::Spec');			ARMOD+=('File::Temp');			ARMOD+=('FileHandle');			
+ARMOD+=('Filesys::Df');			ARMOD+=('Getopt::Long');		ARMOD+=('Inline::C');			
+ARMOD+=('IO');					ARMOD+=('IO::File');			ARMOD+=('IO::Pipe');			
+ARMOD+=('IO::Stringy');			ARMOD+=('HTML::Entities');		ARMOD+=('HTML::Parser');		
+ARMOD+=('HTML::Tagset');		ARMOD+=('HTML::TokeParser');	ARMOD+=('Mail::Field');			
+ARMOD+=('Mail::Header');		ARMOD+=('Mail::IMAPClient');	ARMOD+=('Mail::Internet');		
+ARMOD+=('Math::BigInt');		ARMOD+=('Math::BigRat');		ARMOD+=('MIME::Base64');		
+ARMOD+=('MIME::Decoder');		ARMOD+=('MIME::Decoder::UU');	ARMOD+=('MIME::Head');			
+ARMOD+=('MIME::Parser');		ARMOD+=('MIME::QuotedPrint');	ARMOD+=('MIME::Tools');			
+ARMOD+=('MIME::WordDecoder');	ARMOD+=('Net::CIDR');			ARMOD+=('Net::DNS');			
+ARMOD+=('Net::IP');				ARMOD+=('OLE::Storage_Lite');	ARMOD+=('Pod::Escapes');		
+ARMOD+=('Pod::Simple');			ARMOD+=('POSIX');				ARMOD+=('Scalar::Util');		
+ARMOD+=('Socket'); 				ARMOD+=('Storable'); 	 	 	ARMOD+=('Test::Harness');		
+ARMOD+=('Test::Pod');			ARMOD+=('Test::Simple');		ARMOD+=('Time::HiRes');			
+ARMOD+=('Time::localtime'); 	ARMOD+=('Sys::Hostname::Long');	ARMOD+=('Sys::SigAction');		
+ARMOD+=('Sys::Syslog'); 		ARMOD+=('Env'); 				ARMOD+=('File::ShareDir::Install');
+ARMOD+=('Mail::SpamAssassin');
+
+# not required but nice to have
+ARMOD+=('bignum');				ARMOD+=('Business::ISBN');		ARMOD+=('Business::ISBN::Data');
+ARMOD+=('Data::Dump');			ARMOD+=('DB_File');				ARMOD+=('DBD::SQLite');
+ARMOD+=('DBI');					ARMOD+=('Digest');				ARMOD+=('Encode::Detect');
+ARMOD+=('Error');				ARMOD+=('ExtUtils::CBuilder');	ARMOD+=('ExtUtils::ParseXS');
+ARMOD+=('Getopt::Long');		ARMOD+=('Inline');				ARMOD+=('IO::String');	
+ARMOD+=('IO::Zlib');			ARMOD+=('IP::Country');			ARMOD+=('Mail::SPF');
+ARMOD+=('Mail::SPF::Query');	ARMOD+=('Module::Build');		ARMOD+=('Net::CIDR::Lite');
+ARMOD+=('Net::DNS');			ARMOD+=('Net::LDAP');			ARMOD+=('Net::DNS::Resolver::Programmable');
+ARMOD+=('NetAddr::IP');			ARMOD+=('Parse::RecDescent');	ARMOD+=('Test::Harness');
+ARMOD+=('Test::Manifest');		ARMOD+=('Text::Balanced');		ARMOD+=('URI');	
+ARMOD+=('version');				ARMOD+=('IO::Compress::Bzip2');
+
+# additional spamassassin plugins				
+ARMOD+=('Mail::SpamAssassin::Plugin::Rule2XSBody');		
+ARMOD+=('Mail::SpamAssassin::Plugin::DCC');				
+ARMOD+=('Mail::SpamAssassin::Plugin::Pyzor');
+
+
+# add to array if the user is installing spamassassin
+if [ $SA == 1 ]; then
+	ARMOD+=('Mail::SpamAssassin');
+fi
+
+# add to array if the user is installing clam av
+if [ $CAV == 1 ]; then
+	ARMOD+=('Mail::ClamAV');
+fi
+
+# 32 or 64 bit
+MACHINE_TYPE=`uname -m`
+
+# logging starts here
+(
+clear
+echo;
+echo "Installation results are being logged to saci-mailscanner-install.log";
+echo;
+timewait 1
+
+# install the basics
+echo "Installing required base system utilities.";
+echo "You can safely ignore 'No package available' errors.";
+echo;
+timewait 2
+
+# install base packages
+$YUM -y install $BASEPACKAGES $EPELOPTION
+
+# install this separate in case it conflicts
+if [ "x$MTAOPTION" != "x" ]; then
+	$YUM -y install $MTAOPTION
+	if [ $MTAOPTION = "sendmail" ]; then
+		mkdir -p /var/spool/mqueue.in
+	fi
+fi
+
+# make sure rpm is available
+if [ -x /bin/rpm ]; then
+	RPM=/bin/rpm
+elif [ -x /usr/bin/rpm ]; then
+	RPM=/usr/bin/rpm
+else
+	clear
+	echo;
+	echo "The 'rpm' command cannot be found. I have already attempted to install this";
+	echo "package, but it is still not found. Please ensure that you have network";
+	echo "access to the internet and try running the installation again.";
+	echo;
+	exit 1
+fi
+
+# check for curl
+if [ ! -x /usr/bin/curl ]; then
+	clear
+	echo;
+	echo "The curl command cannot be found. I have already attempted to install this";
+	echo "package, but it is still not found. Please ensure that you have network access";
+	echo "to the internet and try running the installation again.";
+	echo;
+	exit 1
+else
+	CURL='/usr/bin/curl';
+fi
+
+# create the cpan config if there isn't one and the user
+# elected to use CPAN
+if [ $CPANOPTION == 1 ]; then
+	# user elected to use CPAN option
+	if [ ! -f '/root/.cpan/CPAN/MyConfig.pm' ]; then
+		echo;
+		echo "CPAN config missing. Creating one ..."; echo;
+		mkdir -p /root/.cpan/CPAN
+		cd /root/.cpan/CPAN
+		$CURL -O https://s3.amazonaws.com/msv5/CPAN/MyConfig.pm
+		cd $THISCURRPMDIR
+		timewait 1
+	fi
+fi
+
+# install required perl packages that are available via yum along
+# with EPEL packages if the user elected to do so.
+#
+# some items may not be available depending on the distribution 
+# release but those items will be checked after this and installed
+# via cpan if the user elected to do so.
+clear
+echo;
+echo "Installing available Perl packages, Clam AV (if elected), and ";
+echo "Spamassassin (if elected) via yum. You can safely ignore any";
+echo "subsequent 'No package available' errors."; echo;
+timewait 3
+$YUM -y install $TNEF $MOREPACKAGES $CAVOPTION $SAOPTION $SACI
+
+# install missing tnef if the user elected to do so
+if [ $TNEFOPTION == 1 ]; then
+	# user elected to use tnef RPM option
+	if [ ! -x '/usr/bin/tnef' ]; then
+		cd /tmp
+		rm -f tnef-1.4.12*
+		clear
+		echo;
+		echo "Tnef missing. Installing via RPM ..."; echo;
+		if [ $MACHINE_TYPE == 'x86_64' ]; then
+			# 64-bit stuff here
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/tnef-1.4.12-1.x86_64.rpm
+			if [ -f 'tnef-1.4.12-1.x86_64.rpm' ]; then
+				$RPM -Uvh tnef-1.4.12-1.x86_64.rpm
+			fi
+		elif [ $MACHINE_TYPE == 'i686' ]; then
+			# i686 stuff here
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/tnef-1.4.12-1.i686.rpm
+			if [ -f 'tnef-1.4.12-1.i686.rpm' ]; then
+				$RPM -Uvh tnef-1.4.12-1.i686.rpm
+			fi
+		elif [ $MACHINE_TYPE == 'i386' ]; then
+			# i386 stuff here
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/tnef-1.4.12-1.i386.rpm
+			if [ -f 'tnef-1.4.12-1.i686.rpm' ]; then
+				$RPM -Uvh tnef-1.4.12-1.i686.rpm
+			fi
+		else
+			echo "NOTICE: I cannot find a suitable RPM to install tnef (x86_64, i686, i386)";
+			timewait 5
+		fi
+		
+		# back to where i started
+		rm -f tnef-1.4.12*
+		cd $THISCURRPMDIR
+	fi
+fi
+
+# install missing unrar if the user elected to do so
+if [ $UNRAROPTION == 1 ]; then
+	# user elected to use unrar RPM option
+	if [ ! -x '/usr/bin/unrar' ]; then
+		cd /tmp
+		rm -f unrar-5.0.3*
+		clear
+		echo;
+		echo "unrar missing. Installing via RPM ..."; echo;
+		if [ $MACHINE_TYPE == 'x86_64' ]; then
+			# 64-bit stuff here
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/unrar-5.0.3-1.x86_64.rpm
+			if [ -f 'unrar-5.0.3-1.x86_64.rpm' ]; then
+				$RPM -Uvh unrar-5.0.3-1.x86_64.rpm
+			fi
+		elif [ $MACHINE_TYPE == 'i686' ]; then
+			# i686 stuff here
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/unrar-5.0.3-1.i686.rpm
+			if [ -f 'unrar-5.0.3-1.i686.rpm' ]; then
+				$RPM -Uvh unrar-5.0.3-1.i686.rpm
+			fi
+		elif [ $MACHINE_TYPE == 'i386' ]; then
+			# i386 stuff here
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/unrar-5.0.3-1.i386.rpm
+			if [ -f 'unrar-5.0.3-1.i386.rpm' ]; then
+				$RPM -Uvh unrar-5.0.3-1.i386.rpm
+			fi
+		else
+			echo "NOTICE: I cannot find a suitable RPM to install unrar (x86_64, i686, i386)";
+			timewait 5
+		fi
+		
+		# back to where i started
+		rm -f unrar-5.0.3*
+		cd $THISCURRPMDIR
+	fi
+fi
+
+# install missing perl-Filesys-Df and perl-Sys-Hostname-Long on RHEL 7
+if [ $DFOPTION == 1 ]; then
+	# test to see if these are installed. if not install from RPM
+	cd /tmp
+	rm -f perl-Filesys-Df*
+	rm -f perl-Sys-Hostname-Long*
+		
+	# perl-Filesys-Df
+	perldoc -l Filesys::Df >/dev/null 2>&1
+	if [ $? != 0 ]; then
+		if [ $MACHINE_TYPE == 'x86_64' ]; then
+			$CURL -O https://s3.amazonaws.com/msv5/rpm/perl-Filesys-Df-0.92-1.el7.x86_64.rpm
+			if [ -f 'perl-Filesys-Df-0.92-1.el7.x86_64.rpm' ]; then
+				rpm -Uvh perl-Filesys-Df-0.92-1.el7.x86_64.rpm
+			fi
+		fi
+	fi
+	
+	# perl-Sys-Hostname-Long
+	perldoc -l Sys::Hostname::Long >/dev/null 2>&1
+	if [ $? != 0 ]; then
+		$CURL -O https://s3.amazonaws.com/msv5/rpm/perl-Sys-Hostname-Long-1.5-1.el7.noarch.rpm
+		if [ -f 'perl-Sys-Hostname-Long-1.5-1.el7.noarch.rpm' ]; then
+			rpm -Uvh perl-Sys-Hostname-Long-1.5-1.el7.noarch.rpm
+		fi
+	fi
+	
+	# go back to where i started
+	cd $THISCURRPMDIR
+fi
+
+# fix the stupid line in /etc/freshclam.conf that disables freshclam 
+if [ $CAV == 1 ]; then
+	COUT='#Example';
+	if [ -f '/etc/freshclam.conf' ]; then
+		perl -pi -e 's/Example/'$COUT'/;' /etc/freshclam.conf
+	fi
+	freshclam
+fi
+
+# now check for missing perl modules and install them via cpan
+# if the user elected to do so
+clear; echo;
+echo "Checking Perl Modules ... "; echo;
+timewait 2
+# used to trigger a wait if something this missing
+PMODWAIT=0
+
+# first try to install missing perl modules via yum
+# using this trick
+for i in "${ARMOD[@]}"
+do
+	perldoc -l $i >/dev/null 2>&1
+	if [ $? != 0 ]; then
+		echo "$i is missing. Trying to install via Yum ..."; echo;
+		THING="'perl($i)'";
+		$YUM -y install $THING
+	fi
+done
+
+for i in "${ARMOD[@]}"
+do
+	perldoc -l $i >/dev/null 2>&1
+	if [ $? != 0 ]; then
+		if [ $CPANOPTION == 1 ]; then
+			clear
+			echo "$i is missing. Installing via CPAN ..."; echo;
+			timewait 1
+			perl -MCPAN -e "CPAN::Shell->force(qw(install $i ));"
+		else
+			echo "WARNING: $i is missing. You should fix this.";
+			PMODWAIT=5
+		fi
+	else
+		echo "$i => OK";
+	fi
+done
+
+# will pause if a perl module was missing
+timewait $PMODWAIT
+
+# fix the clamav wrapper if the user does not exist
+if [ -f '/etc/freshclam.conf' ]; then
+	if id -u clam >/dev/null 2>&1; then
+		#clam is being used instead of clamav
+		OLDCAVUSR='ClamUser="clamav"';
+		NEWCAVUSR='ClamUser="clam"'
+	
+		OLDCAVGRP='ClamGroup="clamav"';
+		NEWCAVGRP='ClamGroup="clam"';
+	
+		if [ -f '/usr/lib/MailScanner/wrapper/clamav-wrapper' ]; then
+			perl -pi -e 's/'$OLDCAVUSR'/'$NEWCAVUSR'/;' /usr/lib/MailScanner/wrapper/clamav-wrapper
+			perl -pi -e 's/'$OLDCAVGRP'/'$NEWCAVGRP'/;' /usr/lib/MailScanner/wrapper/clamav-wrapper
+		fi
+		
+		freshclam
+	fi
+	
+	if [ -f '/etc/init.d/clamd' ]; then
+		chkconfig clamd on
+	fi
+fi
+
+# selinux
+if [ $SELMODE == 1 ]; then
+	OLDTHING='SELINUX=enforcing';
+	NEWTHING='SELINUX=permissive';
+		
+	if [ -f '/etc/selinux/config' ]; then
+		perl -pi -e 's/'$OLDTHING'/'$NEWTHING'/;' /etc/selinux/config
+	else	
+		clear
+		echo;
+		echo "WARNING: I was unable to find the SELinux configuration file to set";
+		echo "the permissive mode. You will need to find the file and set this item";
+		echo "manually. Press <return> to continue.";
+		read foobar
+	fi
+fi
+
+# make sure in starting directory
+cd $THISCURRPMDIR
+
+clear
+echo;
+echo "Installing the MailScanner RPM ... ";
+
+# install the mailscanner rpm
+$RPM -Uvh --force $NODEPS MailScanner*noarch.rpm
+
+if [ $? != 0 ]; then
+	echo;
+	echo '----------------------------------------------------------';
+	echo 'Installation Error'; echo;
+	echo 'The MailScanner RPM failed to install. Address the required';
+	echo 'dependencies and run the installer again. Note that electing';
+	echo 'to use EPEL and CPAN should resolve dependency errors.';
+	echo;
+	echo 'Note that Perl modules need to be available system-wide. A';
+	echo 'common issue is that missing modules were installed in a ';
+	echo 'user specific configuration.';
+	echo;
+else	
+	# create ramdisk
+	if [ $RAMDISK == 1 ]; then
+		if [ -d '/var/spool/MailScanner/incoming' ]; then
+			echo "Creating the ramdisk ...";
+			echo;
+			DISK="/var/spool/MailScanner/incoming";
+			FSTYPE=$(df -P -T ${DISK}|tail -n +2 | awk '{print $2}')
+
+			if [ $FSTYPE != tmpfs ]; then
+				mount -t tmpfs -o size=${RAMDISKSIZE}M tmpfs ${DISK}
+				echo "tmpfs ${DISK} tmpfs rw,size=${RAMDISKSIZE}M 0 0" >> /etc/fstab
+				echo "Enabling ramdisk sync ...";
+				if [ -f '/etc/MailScanner/defaults' ]; then
+					OLD="^#ramdisk_sync=1";
+					NEW="ramdisk_sync=1";
+					sed -i "s/${OLD}/${NEW}/g" /etc/MailScanner/defaults
+				fi
+			else
+				echo "${DISK} is already a RAMDISK!"; echo;
+			fi
+		fi
+	fi
+	
+	/usr/sbin/ms-update-safe-sites > /dev/null 2>&1
+	/usr/sbin/ms-update-bad-sites > /dev/null 2>&1
+	
+	echo;
+	echo '----------------------------------------------------------';
+	echo 'Installation Complete'; echo;
+	echo 'See http://www.mailscanner.info for more information and  '
+	echo 'support via the MailScanner mailing list.'
+	echo;
+	echo;
+	echo 'Review: Set your preferences in /etc/MailScanner/MailScanner.conf'
+	echo 'and review /etc/MailScanner/defaults';
+fi 
+
+
+) 2>&1 | tee saci-mailscanner-install.log
+
+chmod 755 /var/www/html/SACI/routines.sh
+
+echo "";
+echo "";
+echo "Ok, now you must config SACI at /var/www/html/SACI/app/Config/saci-config.php";
+echo "";
+echo "After you setup, then put in your crontab /var/www/html/SACI/routines.sh to run 5 to 5 minutes";
+echo "";
+echo "To send users notification of holded messages, then put in your crontab \"/var/www/html/SACI/app/Console/cake quarantine advisor\" and choose your time to run";
+
+

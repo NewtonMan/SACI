@@ -1,0 +1,39 @@
+@charset "utf-8";
+.logo-topo {
+    box-shadow: #4dac6d 0 0 250px 250px;
+}
+body div.container {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    background-color: #4dac6d;
+    border-radius: 15px 15px 15px 15px;
+    box-shadow: black 0 0 5px;
+    overflow: hidden;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+div.container-box {
+    box-shadow: black 0 0 5px;
+    overflow: hidden;
+}
+
+.navbar {
+    border-radius: 0 0 0 0;
+    margin-bottom: 0;
+}
+
+.sidebar {
+    margin-bottom: 0;
+    padding-left: 0;
+    height: 500px;
+    background-color: #4dac6d;
+}
+
+.main-container {
+    height: 500px;
+    overflow: auto;
+    background-color: #cde2d4;
+    border-radius: 20px 0 0 0;
+    padding: 20px;
+}
